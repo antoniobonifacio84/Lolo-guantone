@@ -65,6 +65,7 @@
 <div id="start">
   <h1>Il gioco di Lolo</h1>
   <p>Tocca i pupazzetti! 🥊</p>
+  <p class="age" style="font-size:clamp(16px,2.3vw,24px);opacity:.75;margin:.3em 0 .7em">👶 2–3 anni</p>
   <button id="play" aria-label="Gioca">▶</button>
 </div>
 
@@ -1264,6 +1265,55 @@ function drawAnimals() {
   }
 }
 
+// ---------- animale nascosto: si sente il verso dal nascondiglio, Lolo lo trova → esce, sorride, saluta e torna via ----------
+// (circa 1 indovinello su 3; il guantone non tocca MAI gli animali; trovarlo vale una stellina)
+let hideAnimalT = 12;
+function updateHiddenAnimals(realDt) {
+  if (!started) return;
+  if (!transition && T.cast && T.cast.length) {
+    hideAnimalT -= realDt;
+    if (hideAnimalT <= 0) {
+      hideAnimalT = rand(14, 22);
+      const free = slots.filter(s => s.hide && !s.ha && (!s.pupo || s.pupo.state === 'hidden'));
+      const type = pick(T.cast);
+      if (free.length && !slots.some(s => s.ha) && ANIMALS[type]) pick(free).ha = { type, A: ANIMALS[type], st: 'hiding', t: 0, callT: .2, col: pick(RAINBOW) };
+    }
+  }
+  for (const s of slots) {
+    const h = s.ha; if (!h) continue;
+    h.t += realDt;
+    if (h.st === 'hiding') {
+      h.callT -= realDt;
+      if (h.callT <= 0) { h.callT = 2.6; animalSound(h.A, .75); if (speedKey === 'lento') s.wob = Math.max(s.wob, .6); } // il verso dal nascondiglio (🐢: si muove appena)
+      if (h.t > 11 || transition) s.ha = null; // nessuno l'ha trovato: se ne va zitto zitto (nessuna penalità)
+    } else if (h.st === 'out') { if (h.t > 2.8) { h.st = 'back'; h.t = 0; } }
+    else if (h.st === 'back' && h.t > .7) s.ha = null;
+  }
+}
+function revealAnimal(s) { // trovato! esce, sorride e saluta
+  const h = s.ha; h.st = 'out'; h.t = 0;
+  s.wob = 1; sfx.cucu(); animalSound(h.A, 1);
+  const r = slotR(s);
+  for (let i = 0; i < 14; i++) { const a = rand(-Math.PI, 0), sp = rand(120, 300); parts.push({ x: s.x, y: s.y - r * 2.2, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rand(.7, 1.1), max: 1.1, c: pick(['#ff8fb1', '#ffadc2', '#ffd166']), s: R * rand(.1, .18), star: true, rot: rand(0, 6), g: 200 }); }
+  const sz = clamp(R * h.A.size * ANIMAL_SCALE, r, r * 1.7);
+  texts.push({ s: '❤️', x: s.x + sz * 1.1, y: s.y - r * 2.6 - sz * 1.9, t: 0, life: 1.6, c: '#ff8fb1', size: R * .8, rot: 0 }); // il cuoricino sopra, di lato: la faccia resta libera
+  sun.laugh = 1.2; sun.bounce = 1;
+  scorePoint();
+}
+function drawHiddenAnimal(s) {
+  const h = s.ha; if (!h || h.st === 'hiding') return;
+  const r = slotR(s), A = h.A;
+  const rise = h.st === 'out' ? easeOutBack(Math.min(1, h.t * 2.5)) : 1 - Math.min(1, h.t / .7);
+  const sz = clamp(R * A.size * ANIMAL_SCALE, r * 1.0, r * 1.7), ground = isGround(A.kind) || A.kind === 'boat';
+  const hop = h.st === 'out' && h.t > .4 && h.t < 2.2 ? Math.abs(Math.sin((h.t - .4) * 5)) * r * .35 : 0; // saltella contento
+  const y0 = s.y + r * .3 + sz, y1 = ground ? s.y - r * 2.1 : s.y - r * 2.5 - sz * .6; // da sotto, nascosto → sopra il nascondiglio, ben visibile
+  const y = y0 + (y1 - y0) * rise - hop;
+  ctx.save(); ctx.beginPath(); ctx.rect(-10, -10, W + 20, s.y + 10); ctx.clip(); // spunta da dietro il nascondiglio
+  ctx.translate(s.x, y); ctx.rotate(Math.sin(h.t * 7) * .08 * (h.st === 'out' ? 1 : 0)); // dondola: ciao ciao!
+  A.draw(pen(ctx, sz), h.t, { type: h.type, A, dir: 1, s: sz, t: h.t, hop: 0, col: h.col }, ctx, sz);
+  ctx.restore();
+}
+
 // =========================================================
 //  PUPAZZETTI
 // =========================================================
@@ -1293,9 +1343,12 @@ function updatePupo(p, dt) {
   switch (p.state) {
     case 'hidden': {
       p.peekT -= dt;
-      if (p.peekT <= 0) {
-        p.peekLeft = 1.3; p.peekT = rand(3, 7);
-        if (started) sfx.giggle(p.pitch * 1.2, 0.05); // risatina da dietro
+      if (p.peekT <= 0 && !s.ha) { // (se nel nascondiglio c'è un animale, il pupazzetto sta zitto)
+        p.peekT = rand(3, 7);
+        if (Math.random() < .5) { // indovinello: solo la risatina, resta nascosto → Lolo deve capire da dove viene
+          if (started) sfx.giggle(p.pitch * 1.2, 0.09);
+          if (speedKey === 'lento') s.wob = Math.max(s.wob, .5); // 🐢: il nascondiglio si muove appena
+        } else { p.peekLeft = 1.3; if (started) sfx.giggle(p.pitch * 1.2, 0.05); } // fa capolino (risatina da dietro)
       }
       p.peekLeft -= dt;
       const goal = p.peekLeft > 0 ? 1 : 0;
@@ -1411,6 +1464,10 @@ function impact(g) {
   sfx.thump(); sfx.boing(); setTimeout(() => sfx.giggle(p.pitch), 150);
   if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) {} }
   sun.laugh = 1.2; sun.bounce = 1;
+  scorePoint();
+}
+// una stellina in più (colpo col guantone, o un animale trovato nel nascondiglio)
+function scorePoint() {
   hits++;
   if (transition) return; // colpo arrivato durante il cambio livello: conta, ma non riempie
   levelHits++;
@@ -1478,6 +1535,8 @@ function handleTap(x, y) {
   for (let i = slots.length - 1; i >= 0; i--) {
     const s = slots[i];
     if (!s.hide || !inHide(s, x, y)) continue;
+    if (s.ha && s.ha.st === 'hiding') { revealAnimal(s); return; } // c'era un animale! esce a salutare
+    if (s.ha && s.ha.st === 'out') { animalSound(s.ha.A, 1); s.wob = .6; return; } // già fuori: rifà il verso (mai il guantone)
     const p = s.pupo;
     if (p && p.state === 'hidden') { // cucù!
       p.state = 'up'; p.upT = 0; p.v = -slotR(s) * 6;
@@ -1598,6 +1657,7 @@ function update(realDt) {
       }
     }
   }
+  updateHiddenAnimals(realDt);
   for (const p of pupi) updatePupo(p, dt);
   pupi = pupi.filter(p => !p.gone);
 
@@ -2269,6 +2329,7 @@ function drawSlot(s) {
       ctx.save(); ctx.beginPath(); ctx.rect(-10, -10, W + 20, s.y + 10); ctx.clip();
       drawPupo(p); ctx.restore();
     }
+    drawHiddenAnimal(s);
     drawHide(s);
   } else {
     const r = slotR(s);
